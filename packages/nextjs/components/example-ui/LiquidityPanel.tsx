@@ -3,7 +3,11 @@
 import { useEffect, useState } from "react";
 import { formatUnits, parseUnits } from "viem";
 import { useAccount } from "wagmi";
-import { useScaffoldContractRead, useScaffoldContractWrite } from "~~/hooks/scaffold-eth";
+import {
+  useScaffoldContractRead,
+  useScaffoldContractWrite,
+  useDeployedContractInfo,
+} from "~~/hooks/scaffold-eth";
 import { notification } from "~~/utils/scaffold-eth";
 
 export const LiquidityPanel = () => {
@@ -13,6 +17,10 @@ export const LiquidityPanel = () => {
   const [removeAmount, setRemoveAmount] = useState("");
   const [isApprovedA, setIsApprovedA] = useState(false);
   const [isApprovedB, setIsApprovedB] = useState(false);
+
+  // Get DEX deployed address dynamically (no hardcode)
+  const { data: dexInfo } = useDeployedContractInfo("SimpleDEX");
+  const dexAddress = dexInfo?.address;
 
   // Get token addresses
   const { data: tokenAAddress } = useScaffoldContractRead({
@@ -44,7 +52,7 @@ export const LiquidityPanel = () => {
 
   const userLiquidity = userLiquidityData?.[0] || 0n;
   const userShareBasisPoints = userLiquidityData?.[1] || 0n;
-  const userSharePercent = Number(userShareBasisPoints) / 100; // Convert basis points to percent
+  const userSharePercent = Number(userShareBasisPoints) / 100;
 
   // Get token balances
   const { data: balanceA } = useScaffoldContractRead({
@@ -70,17 +78,17 @@ export const LiquidityPanel = () => {
     functionName: "symbol",
   });
 
-  // Check approvals
+  // Check allowances (spender = DEX)
   const { data: allowanceA, refetch: refetchAllowanceA } = useScaffoldContractRead({
     contractName: "MyToken",
     functionName: "allowance",
-    args: [connectedAddress, tokenAAddress],
+    args: [connectedAddress, dexAddress],
   });
 
   const { data: allowanceB, refetch: refetchAllowanceB } = useScaffoldContractRead({
     contractName: "SimpleUSDC",
     functionName: "allowance",
-    args: [connectedAddress, tokenBAddress],
+    args: [connectedAddress, dexAddress],
   });
 
   // Update approval status
@@ -93,17 +101,17 @@ export const LiquidityPanel = () => {
     }
   }, [amountA, amountB, allowanceA, allowanceB]);
 
-  // Approve functions
+  // Approve functions (spender = DEX)
   const { writeAsync: approveTokenA } = useScaffoldContractWrite({
     contractName: "MyToken",
     functionName: "approve",
-    args: [tokenAAddress, parseUnits("1000000", 18)],
+    args: dexAddress ? [dexAddress, parseUnits("1000000", 18)] : undefined,
   });
 
   const { writeAsync: approveTokenB } = useScaffoldContractWrite({
     contractName: "SimpleUSDC",
     functionName: "approve",
-    args: [tokenBAddress, parseUnits("1000000", 6)],
+    args: dexAddress ? [dexAddress, parseUnits("1000000", 6)] : undefined,
   });
 
   // Add liquidity
@@ -120,10 +128,15 @@ export const LiquidityPanel = () => {
     args: [removeAmount ? parseUnits(removeAmount, 18) : 0n],
   });
 
+  // Handlers
   const handleApproveA = async () => {
+    if (!dexAddress) {
+      notification.error("DEX address not loaded yet");
+      return;
+    }
     try {
       await approveTokenA();
-      notification.success("Token A approved!");
+      notification.success(`Approved ${symbolA}`);
       setTimeout(() => refetchAllowanceA(), 2000);
     } catch (error) {
       console.error("Approval failed:", error);
@@ -132,9 +145,13 @@ export const LiquidityPanel = () => {
   };
 
   const handleApproveB = async () => {
+    if (!dexAddress) {
+      notification.error("DEX address not loaded yet");
+      return;
+    }
     try {
       await approveTokenB();
-      notification.success("Token B approved!");
+      notification.success(`Approved ${symbolB}`);
       setTimeout(() => refetchAllowanceB(), 2000);
     } catch (error) {
       console.error("Approval failed:", error);
@@ -254,10 +271,12 @@ export const LiquidityPanel = () => {
 
             {/* Pool Ratio Info */}
             {reserveA > 0n && reserveB > 0n && (
-              <div className="alert alert-info">
+              <div className="alert alert-info mt-2">
                 <span className="text-xs">
                   Current pool ratio: 1 {symbolA} ={" "}
-                  {(Number(formatUnits(reserveB, 6)) / Number(formatUnits(reserveA, 18))).toFixed(4)} {symbolB}
+                  {(Number(formatUnits(reserveB, 6)) /
+                    Number(formatUnits(reserveA, 18))).toFixed(4)}{" "}
+                  {symbolB}
                 </span>
               </div>
             )}
@@ -309,7 +328,7 @@ export const LiquidityPanel = () => {
 
             {/* Expected Output */}
             {removeAmount && (
-              <div className="alert alert-info">
+              <div className="alert alert-info mt-2">
                 <div className="text-xs">
                   <p>You will receive:</p>
                   <p>
